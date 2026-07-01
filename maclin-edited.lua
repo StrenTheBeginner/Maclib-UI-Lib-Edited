@@ -2448,11 +2448,67 @@ function MacLib:Window(Settings)
 				end
 
 				function SectionFunctions:Dropdown(Settings, Flag)
-					local DropdownFunctions = { Settings = Settings, IgnoreConfig = false, Class = "Dropdown" }
+					local DropdownFunctions = { Settings = Settings, IgnoreConfig = false, Class = Settings.Order == true and "OrderMultiDropdown" or "Dropdown" }
 					local Selected = {}
 					local OptionObjs = {}
 					local OrderedOptions = {}
 					local OptionLookup = {}
+
+					if Settings.Order == true then
+						Settings.Multi = true
+					end
+					local useOrder = Settings.Order == true and Settings.Multi == true
+
+					local ORDER_BADGE_COLORS = {
+						Color3.fromRGB(88, 166, 255),
+						Color3.fromRGB(120, 220, 120),
+						Color3.fromRGB(255, 186, 88),
+						Color3.fromRGB(220, 120, 255),
+						Color3.fromRGB(255, 120, 140),
+						Color3.fromRGB(120, 220, 220),
+					}
+
+					local function orderBadgeColor(rank)
+						return ORDER_BADGE_COLORS[((rank - 1) % #ORDER_BADGE_COLORS) + 1]
+					end
+
+					local function formatOrderHeaderText()
+						if not useOrder or #Selected == 0 then
+							return DropdownFunctions.Settings.Name .. "..."
+						end
+						local parts = {}
+						for rank, label in ipairs(Selected) do
+							table.insert(parts, rank .. ":" .. label)
+						end
+						return DropdownFunctions.Settings.Name .. " • " .. table.concat(parts, ", ")
+					end
+
+					local function refreshOrderBadges()
+						if not useOrder then return end
+						for label, obj in pairs(OptionObjs) do
+							local rank = table.find(Selected, label)
+							if obj.OrderBadge and obj.OrderBg then
+								if rank then
+									obj.OrderBadge.Text = tostring(rank)
+									obj.OrderBg.BackgroundColor3 = orderBadgeColor(rank)
+									obj.OrderBg.Visible = true
+									obj.OrderBadge.Visible = true
+									obj.NameLabel.TextColor3 = orderBadgeColor(rank)
+									obj.NameLabel.TextTransparency = 0.1
+								else
+									obj.OrderBg.Visible = false
+									obj.OrderBadge.Visible = false
+									obj.NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+									obj.NameLabel.TextTransparency = 0.5
+								end
+							end
+						end
+						if #Selected > 0 then
+							dropdownName.Text = formatOrderHeaderText()
+						else
+							dropdownName.Text = DropdownFunctions.Settings.Name .. "..."
+						end
+					end
 
 					local function normalizeOptionList(raw)
 						table.clear(OrderedOptions)
@@ -2534,11 +2590,20 @@ function MacLib:Window(Settings)
 							return
 						end
 						if DropdownFunctions.Settings.Multi then
-							local Return = {}
-							for _, opt in ipairs(Selected) do
-								Return[opt] = true
+							if useOrder then
+								local ordered = {}
+								for _, opt in ipairs(Selected) do
+									table.insert(ordered, opt)
+								end
+								DropdownFunctions.Value = ordered
+								DropdownFunctions.Settings.Callback(ordered)
+							else
+								local Return = {}
+								for _, opt in ipairs(Selected) do
+									Return[opt] = true
+								end
+								DropdownFunctions.Settings.Callback(Return)
 							end
-							DropdownFunctions.Settings.Callback(Return)
 						else
 							local label = Selected[1]
 							local entry = label and getEntryByLabel(label)
@@ -2811,7 +2876,9 @@ function MacLib:Window(Settings)
 							return
 						end
 
-						if #Selected > 0 then
+						if useOrder then
+							refreshOrderBadges()
+						elseif #Selected > 0 then
 							dropdownName.Text = DropdownFunctions.Settings.Name .. " • " .. table.concat(Selected, ", ")
 						else
 							dropdownName.Text = DropdownFunctions.Settings.Name .. "..."
@@ -2903,6 +2970,35 @@ function MacLib:Window(Settings)
 						optionUIListLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 						optionUIListLayout.Parent = option
 
+						local orderBg, orderBadge
+						if useOrder then
+							orderBg = Instance.new("Frame")
+							orderBg.Name = "OrderBadgeBg"
+							orderBg.LayoutOrder = -2
+							orderBg.AnchorPoint = Vector2.new(0, 0.5)
+							orderBg.Position = UDim2.fromScale(0, 0.5)
+							orderBg.Size = UDim2.fromOffset(18, 18)
+							orderBg.BackgroundColor3 = ORDER_BADGE_COLORS[1]
+							orderBg.BackgroundTransparency = 0.15
+							orderBg.BorderSizePixel = 0
+							orderBg.Visible = false
+							orderBg.Parent = option
+							local orderCorner = Instance.new("UICorner")
+							orderCorner.CornerRadius = UDim.new(1, 0)
+							orderCorner.Parent = orderBg
+							orderBadge = Instance.new("TextLabel")
+							orderBadge.Name = "OrderBadge"
+							orderBadge.BackgroundTransparency = 1
+							orderBadge.Size = UDim2.fromScale(1, 1)
+							orderBadge.FontFace = Font.new(assets.interFont, Enum.FontWeight.SemiBold)
+							orderBadge.Text = "1"
+							orderBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
+							orderBadge.TextSize = 11
+							orderBadge.TextTransparency = 0
+							orderBadge.Visible = false
+							orderBadge.Parent = orderBg
+						end
+
 						local checkmark = Instance.new("TextLabel")
 						checkmark.Name = "Checkmark"
 						checkmark.FontFace = Font.new(assets.interFont)
@@ -2932,7 +3028,9 @@ function MacLib:Window(Settings)
 							Entry = entry,
 							Button = option,
 							NameLabel = optionName,
-							Checkmark = checkmark
+							Checkmark = checkmark,
+							OrderBg = orderBg,
+							OrderBadge = orderBadge,
 						}
 
 						local tweensettings = {
@@ -3015,6 +3113,26 @@ function MacLib:Window(Settings)
 						for _, entry in ipairs(OrderedOptions) do
 							addOption(entry)
 						end
+					end
+
+					if useOrder and DropdownFunctions.Settings.Default ~= nil then
+						for label, _ in pairs(OptionObjs) do
+							Toggle(label, false)
+						end
+						Selected = {}
+						local defList = typeof(DropdownFunctions.Settings.Default) == "table"
+							and DropdownFunctions.Settings.Default
+							or { DropdownFunctions.Settings.Default }
+						for _, choice in ipairs(defList) do
+							local entry = resolveOptionChoice(choice)
+							if entry and OptionObjs[entry.Label] then
+								Toggle(entry.Label, true)
+							elseif typeof(choice) == "string" and OptionObjs[choice] then
+								Toggle(choice, true)
+							end
+						end
+						refreshOrderBadges()
+						DropdownFunctions.Value = Selected
 					end
 
 					function DropdownFunctions:UpdateName(New)
@@ -3174,6 +3292,13 @@ function MacLib:Window(Settings)
 					if Settings.Search == nil then
 						Settings.Search = true
 					end
+					return self:Dropdown(Settings, Flag)
+				end
+
+				function SectionFunctions:OrderMultiDropdown(Settings, Flag)
+					Settings = Settings or {}
+					Settings.Multi = true
+					Settings.Order = true
 					return self:Dropdown(Settings, Flag)
 				end
 
@@ -5805,6 +5930,20 @@ function MacLib:Window(Settings)
 				return {
 					type = "Dropdown", 
 					flag = Flag, 
+					value = data.Value
+				}
+			end,
+			Load = function(Flag, data)
+				if MacLib.Options[Flag] and data.value then
+					MacLib.Options[Flag]:UpdateSelection(data.value)
+				end
+			end
+		},
+		["OrderMultiDropdown"] = {
+			Save = function(Flag, data)
+				return {
+					type = "OrderMultiDropdown",
+					flag = Flag,
 					value = data.Value
 				}
 			end,
